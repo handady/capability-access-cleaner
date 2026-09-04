@@ -13,13 +13,17 @@
 
   Phases:
     Phase A Detect - report file existence + size vs threshold (default 1GB)
-    Phase B Fix    - ADMIN REQUIRED: takeown, icacls, stop camsvc, truncate file, start camsvc
+    Phase B Fix    - ADMIN REQUIRED. If the current session is NOT elevated, the script
+                     relaunches itself elevated via UAC (Start-Process -Verb RunAs);
+                     click "Yes" on the UAC prompt and the fix completes automatically.
     Phase C Verify - confirm size ~= 0 KB
 
   Flags:
     -DryRun    detection only, modifies nothing
     -SelfTest  demo mode: fabricates fake files under %TEMP%, runs the whole flow.
                No admin, never touches the real system. Never use on a real machine.
+    -LogFile   path where the script appends its step output (used by the elevated run
+               so the non-elevated caller can show the result afterwards).
 
 .PARAMETER TargetFile
   Path to the wal file to inspect/fix. Defaults to the real ProgramData path.
@@ -32,21 +36,38 @@
 
 .PARAMETER SelfTest
   Demo mode with fabricated files under %TEMP%.
+
+.PARAMETER LogFile
+  Optional file to append step output to.
 #>
 [CmdletBinding()]
 param(
     [string]$TargetFile = 'C:\ProgramData\Microsoft\Windows\CapabilityAccessManager\CapabilityAccessManager.db-wal',
     [long]$MinSizeBytes = 1GB,
     [switch]$DryRun,
-    [switch]$SelfTest
+    [switch]$SelfTest,
+    [string]$LogFile = ''
 )
 
 $ErrorActionPreference = 'Continue'
+$script:LogPath = if ($LogFile) { $LogFile } else { $null }
 
-function Write-Step { Write-Host "[STEP] $($args -join ' ')" -ForegroundColor Cyan }
-function Write-Ok    { Write-Host "[ OK ] $($args -join ' ')" -ForegroundColor Green }
-function Write-Warn  { Write-Host "[WARN] $($args -join ' ')" -ForegroundColor Yellow }
-function Write-Fail  { Write-Host "[FAIL] $($args -join ' ')" -ForegroundColor Red }
+function Write-Step { Write-LogLine "[STEP] $($args -join ' ')" 'Cyan' }
+function Write-Ok    { Write-LogLine "[ OK ] $($args -join ' ')" 'Green' }
+function Write-Warn  { Write-LogLine "[WARN] $($args -join ' ')" 'Yellow' }
+function Write-Fail  { Write-LogLine "[FAIL] $($args -join ' ')" 'Red' }
+
+function Write-LogLine {
+    param([string]$Message, [string]$Color)
+    Write-Host $Message -ForegroundColor $Color
+    if ($script:LogPath) {
+        try { Add-Content -LiteralPath $script:LogPath -Value $Message -Encoding UTF8 -ErrorAction Stop } catch {}
+    }
+}
+
+function Test-IsAdmin {
+    ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
 
 # ---------- SelfTest: fabricate files under TEMP and shrink threshold ----------
 $effectiveMin = $MinSizeBytes
@@ -58,7 +79,7 @@ if ($SelfTest) {
     if (Test-Path $demoRoot) { Remove-Item $demoRoot -Recurse -Force }
     New-Item -ItemType Directory -Path $demoRoot -Force | Out-Null
 
-    $normalFile = Join-Path $demoRoot "CapabilityAccessManager.db"   # small -> ignored
+    $normalFile = Join-Path $demoRoot "CapabilityAccessManager.db"     # small -> ignored
     $walFile    = Join-Path $demoRoot "CapabilityAccessManager.db-wal" # big  -> hit
     $fs = [System.IO.File]::Open($normalFile, [System.IO.FileMode]::CreateNew); $fs.SetLength(256KB); $fs.Close()
     $fs = [System.IO.File]::Open($walFile, [System.IO.FileMode]::CreateNew); $fs.SetLength(4MB); $fs.Close()
@@ -92,20 +113,46 @@ if ($item.Length -ge $effectiveMin) {
 if ($SelfTest) { Write-Ok "SelfTest detect phase passed." }
 
 if ($DryRun) {
-    Write-Step "DryRun: detection only, nothing modified. Re-run without -DryRun (as Administrator) to fix."
+    Write-Step "DryRun: detection only, nothing modified. Re-run without -DryRun to fix."
     exit 0
+}
+
+# ---------- Elevation gate (real machine only): relaunch elevated via UAC ----------
+if (-not $isDemoTarget -and -not (Test-IsAdmin)) {
+    Write-Step "Administrator rights required for the fix (takeown/icacls/camsvc)."
+    Write-Step "Relaunching elevated via UAC - please click 'Yes' on the User Account Control prompt..."
+    $log = Join-Path $env:TEMP ("capability-access-cleaner-" + (Get-Date -Format 'yyyyMMdd-HHmmss') + ".log")
+    $argList = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+        ('"{0}"' -f $PSCommandPath),
+        "-LogFile", ('"{0}"' -f $log)
+    )
+    if ($PSBoundParameters.ContainsKey('TargetFile') -and $TargetFile -ne 'C:\ProgramData\Microsoft\Windows\CapabilityAccessManager\CapabilityAccessManager.db-wal') {
+        $argList += "-TargetFile", ('"{0}"' -f $TargetFile)
+    }
+    if ($PSBoundParameters.ContainsKey('MinSizeBytes')) {
+        $argList += "-MinSizeBytes", [string]$MinSizeBytes
+    }
+    try {
+        $p = Start-Process -FilePath "powershell.exe" -ArgumentList $argList -Verb RunAs -Wait -PassThru
+        Write-Ok "Elevated run finished (exit code $($p.ExitCode))."
+        if (Test-Path $log) {
+            Write-Step "Result log:"
+            Get-Content -LiteralPath $log -Tail 60 | ForEach-Object { Write-Host "    $_" }
+            Write-Ok "Full log: $log"
+        }
+        exit $p.ExitCode
+    } catch {
+        Write-Fail "UAC elevation failed or was declined: $($_.Exception.Message)"
+        Write-Warn "Alternative: right-click PowerShell -> 'Run as administrator', then run this script again."
+        exit 1
+    }
 }
 
 # ---------- Phase B: Fix (mirrors the proven runbook) ----------
 Write-Step "Phase B fix: takeown -> icacls -> stop camsvc -> truncate -> start camsvc"
 
 if (-not $isDemoTarget) {
-    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    if (-not $isAdmin) {
-        Write-Fail "ADMIN REQUIRED. Right-click PowerShell -> Run as administrator (title bar must read 'Administrator: Windows PowerShell'), then re-run. Ordinary windows will get access denied on takeown/icacls."
-        exit 1
-    }
-
     Write-Step "takeown /f `"$dir`" /A /R /D Y"
     takeown /f $dir /A /R /D Y | Out-Null
     Write-Step "icacls `"$dir`" /grant Administrators:F /T"

@@ -37,7 +37,8 @@ dsh plugin --profile web add github:<你的用户名>/capability-access-cleaner#
 装完后 **重启 dsh 会话**，对 Agent 说（示例）：
 > 用 clean_capability_access 工具检测这台电脑的 CapabilityAccessManager 异常文件
 
-Agent 会先 `dryRun=true` 检测 → 确认命中后提示以管理员身份执行修复（takeown/icacls 需要管理员）。
+Agent 会先 `dryRun=true` 检测 → 确认命中后执行修复；当前会话非管理员时脚本会自动
+弹 UAC 提权（点一次"是"）并自动完成 takeown/icacls + 截断全流程。
 
 ```bash
 # 卸载
