@@ -27,11 +27,20 @@
 | `cleanup.ps1` | 固定修复脚本：检测 / 修复 / 验证，带 DryRun 与 SelfTest |
 | `docs/清理指南-原始流程.md` | 原始人工流程指南（存档） |
 
+## 开发注意（务必遵守）
+
+- **`@deepseek-ai/dsh-tools` 必须是 `peerDependencies`，不能写成 `dependencies`。**
+  写成普通依赖会让 pnpm 给插件单独装一份 `dsh-tools`，两份实例的
+  `TOOL_RUNTIME_SCHEDULER` Symbol 不一致，导致**每次工具调用都报
+  `Cannot read properties of undefined (reading 'prepare')`**。
+- 插件描述符导出 `{ apply, inject, name }`，用 `ctx.tools.register(defineTool({...}))`
+  注册工具；`output: { schema, render }` 与 `execute(args, exec)` 签名缺一不可。
+
 ## 安装到同事机器（公开仓库，无需账号）
 
 ```bash
 # 同事机器上（已装 dsh）执行 —— 一条命令，从 GitHub 直装
-dsh plugin --profile web add github:<你的用户名>/capability-access-cleaner#main
+dsh plugin --profile web add github:handady/capability-access-cleaner#main
 ```
 
 装完后 **重启 dsh 会话**，对 Agent 说（示例）：
