@@ -1,0 +1,6 @@
+# capability-access-cleaner bundle patch:
+# mounts this plugin as an active profile layer entry when the package is
+# installed through `dsh plugin --profile <name> add <this package>`.
+- insert:
+    - id: capability-access-cleaner
+      name: capability-access-cleaner

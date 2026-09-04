@@ -1,0 +1,12 @@
+# Windows / tooling noise
+Thumbs.db
+Desktop.ini
+*.log
+
+# Keep the distributable clean
+dist/
+*.zip
+
+# Local DSH artifacts (never commit)
+.sessions/
+*.local.json
