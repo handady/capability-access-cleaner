@@ -23,7 +23,7 @@
 |---|---|
 | `package.json` | npm 包声明，含 `dsh.bundle.patch`（声明自己是 profile 层） |
 | `cordis.patch.yml` | bundle patch：把本插件挂载进 profile 层栈 |
-| `lib/index.js` | 插件本体：注册工具 `clean_capability_access`（调用下方脚本） |
+| `lib/index.js` | 插件本体：注册工具 `clean_capability_access` + 斜杠命令 `/clean-capability-access` |
 | `cleanup.ps1` | 固定修复脚本：检测 / 修复 / 验证，带 DryRun 与 SelfTest |
 | `docs/清理指南-原始流程.md` | 原始人工流程指南（存档） |
 
@@ -56,6 +56,20 @@ dsh plugin --profile web remove capability-access-cleaner
 
 > 提示：Windows 路径含空格时，`add` 的路径参数在部分 shell 包装下会被拆错，
 > 优先用 `github:<user>/<repo>#main` 这种无空格的引用方式。
+
+## 一键触发（不用跟 AI 对话）
+
+除了让 Agent 调用工具，插件还注册了一个**斜杠命令**。在输入框敲 `/`，弹出的命令面板里
+就能看到并**点选** `clean-capability-access`（支持模糊搜索），点一下就直接跑脚本，**不经过 AI**：
+
+| 输入 | 行为 |
+|---|---|
+| `/clean-capability-access` | 只检测（DryRun），安全，不改任何东西 |
+| `/clean-capability-access selfTest` | 演示模式：伪造文件跑完整 检测→修复→验证 流程（无需管理员） |
+| `/clean-capability-access fix` | 真正执行修复（takeown/icacls → 停 camsvc → 截断 → 重启）；非管理员会弹 UAC |
+
+> 想给同事做"点一下"的演示，用 `selfTest` 最直观安全；真实排查先敲不带参数的检测，
+> 确认命中后再敲 `fix`。
 
 ## 本地自测（不需要装插件也能验脚本）
 
